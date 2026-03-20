@@ -1,4 +1,5 @@
 <?php
+// user/booking_date.php
 declare(strict_types=1);
 
 require_once __DIR__ . '/../config.php';
@@ -7,19 +8,21 @@ require_once __DIR__ . '/../includes/footer.php';
 
 session_start();
 
-// 1. ตรวจสอบ Login
+// 1. ตรวจสอบ Login และรับค่าแคมเปญที่เลือกมา
 $studentId = isset($_SESSION['evax_student_id']) ? (int)$_SESSION['evax_student_id'] : 0;
-if ($studentId <= 0) {
-    header('Location: index.php', true, 303);
+$campaignId = isset($_GET['campaign_id']) ? (int)$_GET['campaign_id'] : 0;
+
+if ($studentId <= 0 || $campaignId <= 0) {
+    header('Location: booking_campaign.php', true, 303);
     exit;
 }
 
-// 2. [เช็ค 1 คน 1 คิว]
+// 2. เช็ค 1 คน 1 คิว (เฉพาะแคมเปญนี้)
 try {
     $pdo = db();
-    $checkSql = "SELECT COUNT(*) FROM vac_appointments WHERE student_id = :sid AND status IN ('confirmed', 'booked')";
+    $checkSql = "SELECT COUNT(*) FROM camp_appointments WHERE student_id = :sid AND campaign_id = :cid AND status IN ('confirmed', 'booked')";
     $stmtCheck = $pdo->prepare($checkSql);
-    $stmtCheck->execute([':sid' => $studentId]);
+    $stmtCheck->execute([':sid' => $studentId, ':cid' => $campaignId]);
     
     if ((int)$stmtCheck->fetchColumn() > 0) {
         header('Location: my_bookings.php?error=already_booked', true, 303);
@@ -30,161 +33,166 @@ try {
 }
 
 $year = isset($_GET['year']) ? (int)$_GET['year'] : (int)date('Y');
-$month = isset($_GET['month']) ? (int)$_GET['month'] : (int)date('n');
-if ($year < 2000 || $year > 2100) $year = (int)date('Y');
-if ($month < 1 || $month > 12) $month = (int)date('n');
+$month = isset($_GET['month']) ? (int)$_GET['month'] : (int)date('m');
+$selectedDate = isset($_GET['day']) ? $_GET['day'] : null;
 
-$monthName = date('F', strtotime(sprintf('%04d-%02d-01', $year, $month)));
-$daysInMonth = (int)cal_days_in_month(CAL_GREGORIAN, $month, $year);
-$startDayOfWeek = (int)date('w', strtotime(sprintf('%04d-%02d-01', $year, $month)));
-$weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// เปลี่ยนเดือน ถอยหลัง/เดินหน้า
+$prevMonth = $month - 1;
+$prevYear = $year;
+if ($prevMonth < 1) { $prevMonth = 12; $prevYear--; }
 
-$selectedDate = null;
-if (isset($_GET['selected_date'])) {
-    $selectedDate = (int)$_GET['selected_date'];
-}
-if ($selectedDate !== null && ($selectedDate < 1 || $selectedDate > $daysInMonth)) {
-    $selectedDate = null;
-}
+$nextMonth = $month + 1;
+$nextYear = $year;
+if ($nextMonth > 12) { $nextMonth = 1; $nextYear++; }
 
 $dailyStats = [];
 $dbError = null;
-
 try {
+    $startDate = "$year-" . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . "-01";
+    $endDate = date('Y-m-d', strtotime("$startDate +1 month"));
+
+    // หา Capacity รวมของแต่ละวัน (แยกตามแคมเปญ)
     $sqlTotal = "
         SELECT DAY(ts.slot_date) AS day_num, COALESCE(SUM(ts.max_capacity), 0) AS total_capacity
-        FROM vac_time_slots ts
+        FROM camp_time_slots ts
         WHERE ts.slot_date >= :startDate AND ts.slot_date < :endDate
+          AND ts.campaign_id = :cid
         GROUP BY DAY(ts.slot_date)
     ";
-    $startDate = sprintf('%04d-%02d-01', $year, $month);
-    $endDate = date('Y-m-d', strtotime($startDate . ' +1 month'));
-
     $stmt = $pdo->prepare($sqlTotal);
-    $stmt->execute([':startDate' => $startDate, ':endDate' => $endDate]);
-    foreach ($stmt->fetchAll() as $row) {
-        $day = (int)$row['day_num'];
-        $dailyStats[$day] = ['total' => (int)$row['total_capacity'], 'booked' => 0, 'remaining' => (int)$row['total_capacity']];
-    }
+    $stmt->execute([':startDate' => $startDate, ':endDate' => $endDate, ':cid' => $campaignId]);
+    $totals = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
 
+    // หาจำนวนคนที่จองแล้วในแต่ละวัน (แยกตามแคมเปญ)
     $sqlBooked = "
         SELECT DAY(ts.slot_date) AS day_num, COUNT(*) AS booked_count
-        FROM vac_appointments ap
-        INNER JOIN vac_time_slots ts ON ts.id = ap.slot_id
+        FROM camp_appointments ap
+        INNER JOIN camp_time_slots ts ON ts.id = ap.slot_id
         WHERE ts.slot_date >= :startDate AND ts.slot_date < :endDate
+          AND ap.campaign_id = :cid
           AND ap.status IN ('confirmed', 'booked')
         GROUP BY DAY(ts.slot_date)
     ";
     $stmt2 = $pdo->prepare($sqlBooked);
-    $stmt2->execute([':startDate' => $startDate, ':endDate' => $endDate]);
-    foreach ($stmt2->fetchAll() as $row) {
-        $day = (int)$row['day_num'];
-        $booked = (int)$row['booked_count'];
-        if (!isset($dailyStats[$day])) $dailyStats[$day] = ['total' => 0, 'booked' => 0, 'remaining' => 0];
-        $dailyStats[$day]['booked'] = $booked;
-        $dailyStats[$day]['remaining'] = max(0, $dailyStats[$day]['total'] - $booked);
+    $stmt2->execute([':startDate' => $startDate, ':endDate' => $endDate, ':cid' => $campaignId]);
+    $bookeds = $stmt2->fetchAll(PDO::FETCH_KEY_PAIR);
+
+    for ($d = 1; $d <= 31; $d++) {
+        $t = $totals[$d] ?? 0;
+        $b = $bookeds[$d] ?? 0;
+        $dailyStats[$d] = ['total' => $t, 'booked' => $b];
     }
-} catch (Throwable $e) {
+} catch (PDOException $e) {
     $dbError = $e->getMessage();
 }
 
-function density_color(string $density): string {
-    return match ($density) {
-        'high' => 'bg-red-500',
-        'medium' => 'bg-yellow-400',
-        'low' => 'bg-green-500',
-        default => 'bg-gray-200',
-    };
+function density_for_day($y, $m, $d, $stats, $dbErr) {
+    if ($dbErr) return 'none';
+    $t = $stats[$d]['total'] ?? 0;
+    $b = $stats[$d]['booked'] ?? 0;
+    if ($t == 0) return 'none';
+    if ($b >= $t) return 'high';
+    $pct = $b / $t;
+    if ($pct >= 0.8) return 'medium';
+    return 'low';
 }
 
-function density_for_day(int $year, int $month, int $day, array $dailyStats, ?string $dbError): string {
-    $dateStr = sprintf('%04d-%02d-%02d', $year, $month, $day);
-    if ($dateStr < date('Y-m-d')) return 'disabled';
-    if ($dbError !== null) return 'disabled';
-    
-    $total = $dailyStats[$day]['total'] ?? 0;
-    $remaining = $dailyStats[$day]['remaining'] ?? 0;
-    if ($total <= 0) return 'disabled';
-
-    $ratio = $remaining / $total;
-    if ($ratio > 0.5) return 'low';
-    if ($ratio >= 0.1) return 'medium';
-    return 'high';
-}
-
-render_header('Select Date');
+render_header('เลือกวันเข้าร่วมกิจกรรม');
 ?>
 
-<div class="p-5 pb-32 flex flex-col h-full animate-in fade-in slide-in-from-right-4 duration-500">
-    <div class="flex-1">
-        <div class="flex items-center gap-2 mb-5">
-            <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                <i class="fa-solid fa-calendar-day text-[#0052CC]"></i>
-            </div>
-            <div>
-                <h2 class="text-xl font-bold text-gray-900">Select Date</h2>
-                <p class="text-xs text-gray-500">Choose your vaccination day</p>
-            </div>
+<div class="p-5 pb-32 flex flex-col h-full bg-[#f4f7fa]">
+    <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-900">เลือกวันจองคิว</h2>
+        <p class="text-sm text-gray-500 mt-1">กรุณาเลือกวันที่คุณต้องการเข้าร่วมกิจกรรม</p>
+    </div>
+
+    <div class="bg-white rounded-3xl p-5 shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-6">
+            <a href="?year=<?= $prevYear ?>&month=<?= $prevMonth ?>&campaign_id=<?= $campaignId ?>" class="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 text-gray-600 hover:bg-[#0052CC] hover:text-white transition-colors">
+                <i class="fa-solid fa-chevron-left"></i>
+            </a>
+            <h3 class="text-lg font-bold text-gray-900 font-prompt"><?= date('F Y', mktime(0,0,0,$month,1,$year)) ?></h3>
+            <a href="?year=<?= $nextYear ?>&month=<?= $nextMonth ?>&campaign_id=<?= $campaignId ?>" class="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 text-gray-600 hover:bg-[#0052CC] hover:text-white transition-colors">
+                <i class="fa-solid fa-chevron-right"></i>
+            </a>
         </div>
 
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6">
-            <div class="flex items-center justify-between mb-5">
-                <?php
-                    $prev = strtotime(sprintf('%04d-%02d-01', $year, $month) . ' -1 month');
-                    $next = strtotime(sprintf('%04d-%02d-01', $year, $month) . ' +1 month');
-                ?>
-                <a href="?year=<?= (int)date('Y', $prev) ?>&month=<?= (int)date('n', $prev) ?>" class="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors">
-                    <i class="fa-solid fa-chevron-left"></i>
-                </a>
-                <h3 class="font-bold text-gray-800 text-lg"><?= htmlspecialchars($monthName . ' ' . $year) ?></h3>
-                <a href="?year=<?= (int)date('Y', $next) ?>&month=<?= (int)date('n', $next) ?>" class="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors">
-                    <i class="fa-solid fa-chevron-right"></i>
-                </a>
-            </div>
+        <div class="grid grid-cols-7 gap-y-4 text-center">
+            <div class="text-xs font-bold text-gray-400 uppercase">Sun</div>
+            <div class="text-xs font-bold text-gray-400 uppercase">Mon</div>
+            <div class="text-xs font-bold text-gray-400 uppercase">Tue</div>
+            <div class="text-xs font-bold text-gray-400 uppercase">Wed</div>
+            <div class="text-xs font-bold text-gray-400 uppercase">Thu</div>
+            <div class="text-xs font-bold text-gray-400 uppercase">Fri</div>
+            <div class="text-xs font-bold text-gray-400 uppercase">Sat</div>
 
-            <form method="GET" class="grid grid-cols-7 gap-y-4 gap-x-2 mb-2">
-                <input type="hidden" name="year" value="<?= $year ?>">
-                <input type="hidden" name="month" value="<?= $month ?>">
+            <?php
+            $firstDayOfMonth = mktime(0,0,0,$month,1,$year);
+            $daysInMonth = date('t', $firstDayOfMonth);
+            $dayOfWeek = date('w', $firstDayOfMonth);
+
+            for ($i = 0; $i < $dayOfWeek; $i++) {
+                echo "<div></div>";
+            }
+
+            for ($d = 1; $d <= $daysInMonth; $d++) {
+                $dateStr = sprintf("%04d-%02d-%02d", $year, $month, $d);
+                $isPast = strtotime($dateStr) < strtotime(date('Y-m-d'));
                 
-                <?php foreach ($weekDays as $d): ?>
-                    <div class="text-center text-xs font-bold text-gray-400 uppercase tracking-wider"><?= $d ?></div>
-                <?php endforeach; ?>
+                $density = density_for_day($year, $month, $d, $dailyStats, $dbError);
+                
+                $dotClass = 'hidden';
+                $btnClass = 'text-gray-700 hover:bg-gray-50';
+                $disabled = '';
+                
+                if ($density === 'none' || $isPast) {
+                    $btnClass = 'text-gray-300 cursor-not-allowed';
+                    $disabled = 'disabled';
+                } else {
+                    $dotClass = 'block';
+                    $dotColor = match($density) {
+                        'high' => 'bg-red-500',
+                        'medium' => 'bg-yellow-400',
+                        default => 'bg-green-500'
+                    };
+                }
 
-                <?php for ($i = 0; $i < $startDayOfWeek; $i++): ?>
-                    <div class="h-10"></div>
-                <?php endfor; ?>
+                if ($selectedDate == $d && $density !== 'none' && !$isPast) {
+                    $btnClass = 'bg-[#0052CC] text-white shadow-md shadow-blue-200';
+                }
 
-                <?php for ($day = 1; $day <= $daysInMonth; $day++): 
-                    $density = density_for_day($year, $month, $day, $dailyStats, $dbError);
-                    $isSelected = ($selectedDate === $day);
-                    $isDisabled = ($density === 'disabled');
-
-                    $numberClasses = "w-9 h-9 flex items-center justify-center rounded-full text-sm transition-all " .
-                        ($isSelected ? "bg-[#0052CC] text-white font-bold shadow-md" : ($isDisabled ? "text-gray-300" : "text-gray-700 font-medium group-hover:bg-blue-50"));
-                    $dotClasses = "w-1.5 h-1.5 rounded-full mt-1 absolute bottom-0 " . density_color($density) . " " . (($isSelected && !$isDisabled) ? "opacity-100" : "opacity-80") . " " . ($isDisabled ? "hidden" : "");
-                ?>
-                    <button type="submit" name="selected_date" value="<?= $day ?>" <?= $isDisabled ? 'disabled' : '' ?> class="relative flex flex-col items-center justify-center h-12 w-full group cursor-pointer disabled:cursor-not-allowed">
-                        <div class="<?= $numberClasses ?>"><?= $day ?></div>
-                        <div class="<?= $dotClasses ?>"></div>
-                    </button>
-                <?php endfor; ?>
-            </form>
+                echo "<div class='flex justify-center'>";
+                echo "<form action='' method='GET' class='m-0'>";
+                echo "<input type='hidden' name='year' value='$year'>";
+                echo "<input type='hidden' name='month' value='$month'>";
+                echo "<input type='hidden' name='day' value='$d'>";
+                echo "<input type='hidden' name='campaign_id' value='$campaignId'>";
+                echo "<button type='submit' $disabled class='relative w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold transition-all $btnClass'>";
+                echo $d;
+                if ($density !== 'none' && !$isPast) {
+                    echo "<span class='absolute bottom-1 w-1.5 h-1.5 rounded-full $dotColor'></span>";
+                }
+                echo "</button>";
+                echo "</form>";
+                echo "</div>";
+            }
+            ?>
         </div>
 
-        <div class="flex items-center justify-between text-xs font-semibold text-gray-600 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-green-500"></span> Available</div>
-            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-yellow-400"></span> Medium</div>
-            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span> Full</div>
+        <div class="flex items-center justify-between text-xs font-semibold text-gray-600 bg-white mt-6 pt-4 border-t border-gray-100">
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-green-500"></span> ว่าง</div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-yellow-400"></span> ใกล้เต็ม</div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span> เต็ม</div>
         </div>
     </div>
 </div>
 
 <div class="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-4 bg-white border-t border-gray-100 z-20 flex gap-3 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.1)]">
-    <a href="profile.php" class="px-6 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors text-center">Back</a>
-    <?php if ($selectedDate === null || density_for_day($year, $month, (int)$selectedDate, $dailyStats, $dbError) === 'high'): ?>
-        <button type="button" disabled class="flex-1 bg-gray-300 text-gray-500 cursor-not-allowed font-bold py-4 rounded-xl text-center">Next Step</button>
+    <a href="booking_campaign.php" class="px-6 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors text-center shadow-sm">ย้อนกลับ</a>
+    <?php if ($selectedDate === null || density_for_day($year, $month, (int)$selectedDate, $dailyStats, $dbError) === 'high' || strtotime(sprintf("%04d-%02d-%02d", $year, $month, $selectedDate)) < strtotime(date('Y-m-d'))): ?>
+        <button type="button" disabled class="flex-1 bg-gray-200 text-gray-400 font-bold py-4 rounded-xl cursor-not-allowed">ดำเนินการต่อ</button>
     <?php else: ?>
-        <a href="booking_time.php?year=<?= $year ?>&month=<?= $month ?>&day=<?= $selectedDate ?>" class="flex-1 bg-[#0052CC] hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-colors text-center shadow-sm">Next Step</a>
+        <a href="booking_time.php?year=<?= $year ?>&month=<?= $month ?>&day=<?= $selectedDate ?>&campaign_id=<?= $campaignId ?>" class="flex-1 bg-[#0052CC] hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all shadow-sm text-center">ดำเนินการต่อ</a>
     <?php endif; ?>
 </div>
 

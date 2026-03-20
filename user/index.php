@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 $isComplete = !empty($user['student_personnel_id']);
                 
                 // 3. เช็คประวัติการจองที่ยังไม่ยกเลิก
-                $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM vac_appointments WHERE student_id = :sid AND status IN ('confirmed', 'booked')");
+                $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM camp_appointments WHERE student_id = :sid AND status IN ('confirmed', 'booked')");
                 $stmtCheck->execute([':sid' => $user['id']]);
                 $hasBooking = (int)$stmtCheck->fetchColumn() > 0;
 
@@ -66,7 +66,7 @@ render_header('Initializing...');
 <script>
 async function initLiff() {
     try {
-        await liff.init({ liffId: '2008476166-yRYxeEJF' }); 
+        await liff.init({ liffId: '2008476166-FBKVySKi' }); 
         
         if (!liff.isLoggedIn()) {
             liff.login();
@@ -90,7 +90,7 @@ async function initLiff() {
                 if (data.has_booking) {
                     window.location.replace('my_bookings.php');
                 } else if (data.is_complete) {
-                    window.location.replace('booking_date.php');
+                    window.location.replace('booking_campaign.php');
                 } else {
                     window.location.replace('consent.php');
                 }

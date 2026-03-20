@@ -72,7 +72,7 @@ try {
     if ($hasBooking) {
         header('Location: my_bookings.php', true, 303);
     } else {
-        header('Location: booking_date.php', true, 303);
+        header('Location: booking_campaign.php', true, 303);
     }
     exit;
 
