@@ -48,9 +48,9 @@
             <div class="mt-6 mb-2 px-6">
                 <p class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Campaign Management</p>
                 <div class="space-y-1">
-                    <a href="vaccines.php" class="flex items-center gap-3 p-3 rounded-xl <?= basename($_SERVER['PHP_SELF']) == 'vaccines.php' ? 'bg-blue-50 text-[#0052CC] font-semibold' : 'text-gray-600 hover:bg-gray-50' ?> transition-colors">
-                        <i class="fa-solid fa-layer-group w-5 text-center"></i> จัดการแคมเปญ (วัคซีน)
-                    </a>
+                    <a href="campaigns.php" class="flex items-center gap-3 p-3 rounded-xl <?= basename($_SERVER['PHP_SELF']) == 'campaigns.php' ? 'bg-blue-50 text-[#0052CC] font-semibold' : 'text-gray-600 hover:bg-gray-50' ?> transition-colors">
+    <i class="fa-solid fa-layer-group w-5 text-center"></i> จัดการแคมเปญ
+</a>
                     <a href="time_slots.php" class="flex items-center gap-3 p-3 rounded-xl <?= basename($_SERVER['PHP_SELF']) == 'time_slots.php' ? 'bg-blue-50 text-[#0052CC] font-semibold' : 'text-gray-600 hover:bg-gray-50' ?> transition-colors">
                         <i class="fa-solid fa-calendar-alt w-5 text-center"></i> จัดการรอบเวลาแคมเปญ
                     </a>

@@ -1,142 +1,96 @@
 <?php
 // admin/index.php
+require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/includes/auth.php';
+
+$pdo = db();
+
+// 1. สรุปภาพรวมแคมเปญที่กำลังเปิดอยู่ (Active)
+$stmt = $pdo->query("
+    SELECT 
+        COUNT(*) as total_campaigns,
+        (SELECT COUNT(*) FROM camp_appointments WHERE status = 'booked') as pending_count,
+        (SELECT COUNT(*) FROM camp_appointments WHERE status = 'confirmed') as confirmed_count
+    FROM campaigns WHERE status = 'active'
+");
+$stats = $stmt->fetch();
+
+// 2. ดึง 5 แคมเปญยอดฮิตที่มีคนจองเยอะสุด
+$popular_stmt = $pdo->query("
+    SELECT c.title, COUNT(a.id) as booking_count
+    FROM campaigns c
+    LEFT JOIN camp_appointments a ON c.id = a.campaign_id
+    GROUP BY c.id
+    ORDER BY booking_count DESC
+    LIMIT 5
+");
+$popular_campaigns = $popular_stmt->fetchAll();
+
 require_once __DIR__ . '/includes/header.php';
-// ไม่ต้อง Query PHP ตรงนี้แล้ว เพราะเราจะให้ Javascript เป็นตัวดึงตั้งแต่เริ่มโหลดหน้า
 ?>
 
-<div class="mb-6 flex justify-between items-end">
-    <div>
-        <h1 class="text-2xl font-bold text-gray-900">ภาพรวมระบบ (Dashboard)</h1>
-        <p class="text-sm text-gray-500 mt-1">ข้อมูลอัปเดตอัตโนมัติ (Real-time)</p>
-    </div>
-    <a href="bookings.php" class="hidden md:flex bg-gray-100 hover:bg-gray-200 text-[#0052CC] px-4 py-2 rounded-xl font-medium transition-colors text-sm shadow-sm items-center gap-2 font-prompt">
-        ดูคิวทั้งหมด ➔
-    </a>
+<div class="mb-8">
+    <h1 class="text-2xl font-bold text-gray-900">แผงควบคุมระบบแคมเปญ (Dashboard)</h1>
+    <p class="text-gray-500">ภาพรวมสถิติการลงทะเบียนเข้าร่วมกิจกรรมทั้งหมด</p>
 </div>
 
-<div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
-    <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center transition-all duration-300" id="card-total">
-        <div class="flex items-center gap-3 mb-2">
-            <div class="w-10 h-10 bg-blue-50 text-blue-500 rounded-lg flex items-center justify-center text-lg"><i class="fa-solid fa-chart-line"></i></div>
-            <p class="text-sm text-gray-500 font-medium">การจองทั้งหมด</p>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+        <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center text-xl">
+            <i class="fa-solid fa-bullhorn"></i>
         </div>
-        <h3 class="text-3xl font-bold text-gray-900 ml-1"><span id="stat-total">...</span> <span class="text-xs font-normal text-gray-400">รายการ</span></h3>
-    </div>
-    
-    <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center transition-all duration-300" id="card-pending">
-        <div class="flex items-center gap-3 mb-2">
-            <div class="w-10 h-10 bg-yellow-50 text-yellow-500 rounded-lg flex items-center justify-center text-lg"><i class="fa-solid fa-hourglass-half"></i></div>
-            <p class="text-sm text-gray-500 font-medium">รออนุมัติ</p>
+        <div>
+            <p class="text-sm text-gray-500 font-medium">แคมเปญที่เปิดอยู่</p>
+            <h3 class="text-2xl font-bold text-gray-900"><?= number_format($stats['total_campaigns']) ?></h3>
         </div>
-        <h3 class="text-3xl font-bold text-yellow-600 ml-1"><span id="stat-pending">...</span> <span class="text-xs font-normal text-gray-400">รายการ</span></h3>
     </div>
-
-    <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center transition-all duration-300" id="card-confirmed">
-        <div class="flex items-center gap-3 mb-2">
-            <div class="w-10 h-10 bg-green-50 text-green-500 rounded-lg flex items-center justify-center text-lg"><i class="fa-solid fa-circle-check"></i></div>
-            <p class="text-sm text-gray-500 font-medium">อนุมัติแล้ว</p>
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+        <div class="w-12 h-12 bg-yellow-100 text-yellow-600 rounded-xl flex items-center justify-center text-xl">
+            <i class="fa-solid fa-clock-rotate-left"></i>
         </div>
-        <h3 class="text-3xl font-bold text-green-600 ml-1"><span id="stat-confirmed">...</span> <span class="text-xs font-normal text-gray-400">รายการ</span></h3>
-    </div>
-
-    <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center transition-all duration-300" id="card-cancelled">
-        <div class="flex items-center gap-3 mb-2">
-            <div class="w-10 h-10 bg-red-50 text-red-500 rounded-lg flex items-center justify-center text-lg"><i class="fa-solid fa-circle-xmark"></i></div>
-            <p class="text-sm text-gray-500 font-medium">ยกเลิก/สละสิทธิ์</p>
+        <div>
+            <p class="text-sm text-gray-500 font-medium">รออนุมัติคิว</p>
+            <h3 class="text-2xl font-bold text-gray-900"><?= number_format($stats['pending_count']) ?></h3>
         </div>
-        <h3 class="text-3xl font-bold text-red-500 ml-1"><span id="stat-cancelled">...</span> <span class="text-xs font-normal text-gray-400">รายการ</span></h3>
     </div>
-</div>
-
-<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-    <div onclick="toggleTodayTable()" class="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none">
-        <div class="flex items-center gap-3">
-            <h2 class="text-lg font-bold text-[#0052CC] flex items-center gap-2">
-                <i class="fa-solid fa-calendar-day"></i> ตารางนัดหมายประจำวันนี้
-            </h2>
-            <span class="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200">
-                <?= date('d M Y') ?>
-            </span>
-            <span class="text-xs font-bold text-[#0052CC] bg-blue-100 px-2 py-1 rounded-md">
-                <span id="badge-today-count">0</span> คิว
-            </span>
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+        <div class="w-12 h-12 bg-green-100 text-green-600 rounded-xl flex items-center justify-center text-xl">
+            <i class="fa-solid fa-check-double"></i>
         </div>
-        <svg id="arrow-icon" class="w-5 h-5 text-gray-500 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-    </div>
-    
-    <div id="table-container" class="hidden animate-in fade-in slide-in-from-top-2 duration-300">
-        <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm whitespace-nowrap">
-                <thead class="bg-white text-gray-400 font-semibold border-b border-gray-100 text-xs uppercase tracking-wider">
-                    <tr>
-                        <th class="px-6 py-4">เวลา</th>
-                        <th class="px-6 py-4">ชื่อผู้เข้ารับวัคซีน</th>
-                        <th class="px-6 py-4">เบอร์ติดต่อ</th>
-                        <th class="px-6 py-4 text-center">สถานะ</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100" id="tbody-today">
-                    <tr><td colspan="4" class="px-6 py-12 text-center text-gray-400">กำลังโหลดข้อมูล...</td></tr>
-                </tbody>
-            </table>
+        <div>
+            <p class="text-sm text-gray-500 font-medium">อนุมัติแล้วทั้งหมด</p>
+            <h3 class="text-2xl font-bold text-gray-900"><?= number_format($stats['confirmed_count']) ?></h3>
         </div>
     </div>
 </div>
 
-<script>
-function toggleTodayTable() {
-    const container = document.getElementById('table-container');
-    const arrow = document.getElementById('arrow-icon');
-    if (container.classList.contains('hidden')) {
-        container.classList.remove('hidden');
-        arrow.classList.add('rotate-180');
-    } else {
-        container.classList.add('hidden');
-        arrow.classList.remove('rotate-180');
-    }
-}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="p-5 border-b border-gray-50 bg-gray-50/50">
+            <h3 class="font-bold text-gray-800">แคมเปญยอดนิยม</h3>
+        </div>
+        <div class="p-5">
+            <div class="space-y-4">
+                <?php foreach($popular_campaigns as $pc): ?>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-700 font-medium"><?= htmlspecialchars($pc['title']) ?></span>
+                    <span class="bg-gray-100 px-3 py-1 rounded-full text-xs font-bold text-gray-600"><?= number_format($pc['booking_count']) ?> จอง</span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </div>
 
-// ==========================================
-// ระบบ Real-time (AJAX Polling)
-// ==========================================
-function fetchDashboardData() {
-    fetch('ajax_dashboard.php')
-        .then(response => response.json())
-        .then(data => {
-            if(data.error) return;
-
-            // 1. อัปเดตสถิติ พร้อม Effect กระพริบเบาๆ ถ้าเลขเปลี่ยน
-            updateStat('stat-total', data.stats.total, 'card-total');
-            updateStat('stat-pending', data.stats.pending, 'card-pending');
-            updateStat('stat-confirmed', data.stats.confirmed, 'card-confirmed');
-            updateStat('stat-cancelled', data.stats.cancelled, 'card-cancelled');
-
-            // 2. อัปเดตตารางและ Badge
-            document.getElementById('badge-today-count').innerText = data.todayCount;
-            document.getElementById('tbody-today').innerHTML = data.tableHtml;
-        })
-        .catch(error => console.error('Error fetching data:', error));
-}
-
-function updateStat(elementId, newValue, cardId) {
-    const el = document.getElementById(elementId);
-    if (el.innerText !== String(newValue) && el.innerText !== '...') {
-        // ทำ Effect ให้กล่องกระพริบถ้ามีข้อมูลใหม่เข้ามา
-        const card = document.getElementById(cardId);
-        card.classList.add('scale-[1.02]', 'shadow-md', 'ring-2', 'ring-blue-200');
-        setTimeout(() => {
-            card.classList.remove('scale-[1.02]', 'shadow-md', 'ring-2', 'ring-blue-200');
-        }, 500);
-    }
-    el.innerText = newValue;
-}
-
-// โหลดครั้งแรกทันทีที่เปิดหน้า
-fetchDashboardData();
-
-// ตั้งเวลาให้ดึงข้อมูลใหม่ทุกๆ 5 วินาที
-setInterval(fetchDashboardData, 5000);
-</script>
+    <div class="grid grid-cols-2 gap-4">
+        <a href="campaigns.php" class="bg-[#0052CC] text-white p-6 rounded-2xl flex flex-col justify-between hover:bg-blue-700 transition-all">
+            <i class="fa-solid fa-plus-circle text-2xl mb-4"></i>
+            <span class="font-bold">สร้างแคมเปญใหม่</span>
+        </a>
+        <a href="time_slots.php" class="bg-white border border-gray-100 p-6 rounded-2xl flex flex-col justify-between hover:bg-gray-50 transition-all shadow-sm">
+            <i class="fa-solid fa-calendar-plus text-2xl text-[#0052CC] mb-4"></i>
+            <span class="font-bold text-gray-800">เพิ่มรอบเวลา</span>
+        </a>
+    </div>
+</div>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>
